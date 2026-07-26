@@ -29,7 +29,12 @@ func (r *Router) appendCacheKey(b []byte, q *QueryCtx) []byte {
 		b = append(b, q.ECSZone...)
 	case q.ECS2Upstream.IsValid():
 		b = append(b, 2)
-		q.ECS2Upstream.Masked().AppendTo(b)
+		// AppendTo follows Go's append convention: it may reallocate and returns
+		// the resulting slice. Dropping that return value silently discarded the
+		// ECS prefix, so it never became part of the cache key -- every client
+		// shared a single cache entry regardless of its subnet, and the length
+		// byte written below covered only the type marker.
+		b = q.ECS2Upstream.Masked().AppendTo(b)
 	}
 	b[p] = byte(len(b) - p)
 	return b
