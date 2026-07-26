@@ -73,12 +73,18 @@ func (h *Limit) Handle(ctx context.Context, q *router.QueryCtx) {
 
 	if ccLimit := h.args.Concurrent; ccLimit > 0 {
 		cc := h.concurrent.Add(1)
+		// Register the decrement immediately after the increment. It used to sit
+		// after the over-limit check, so a rejected query returned without ever
+		// decrementing -- the counter kept the leaked increment forever. Once
+		// enough bursts leaked past the limit, the counter stayed above ccLimit
+		// permanently and every subsequent query was REFUSED until restart,
+		// turning a transient spike into a permanent self-inflicted outage.
+		defer h.concurrent.Add(-1)
 		if cc > ccLimit {
 			h.rejectedCcTotal.Inc()
 			router.SetEmptyRespMQ(q, dnsmsg.RCodeRefused)
 			return
 		}
-		defer h.concurrent.Add(-1)
 	}
 	h.next.Handle(ctx, q)
 }
