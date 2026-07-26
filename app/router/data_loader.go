@@ -86,13 +86,19 @@ func (s *fileLoader[V]) Commit() {
 		s.v.Store(s.staged)
 		s.hash = s.stagedHash
 		s.staged = nil
-		clear(s.hash[:])
+		// Clear the staging hash, not the committed one. Wiping s.hash here threw
+		// away the checksum that was just recorded, so after the first real change
+		// every later reload saw a zero hash, never matched, and re-parsed the file
+		// even when its contents were identical.
+		clear(s.stagedHash[:])
 	}
 }
 
 func (s *fileLoader[V]) Discard() {
 	s.staged = nil
-	clear(s.hash[:])
+	// Same reason as above: discarding a staged value must not invalidate the
+	// checksum of the value that is currently live.
+	clear(s.stagedHash[:])
 }
 
 func (s *fileLoader[V]) V() *V {
