@@ -2,6 +2,7 @@ package router
 
 import (
 	"net"
+	"time"
 
 	"github.com/IrineSistiana/mosproxy/internal/pool"
 	"github.com/IrineSistiana/mosproxy/pkg/dnsmsg"
@@ -45,6 +46,12 @@ func (r *Router) logAccess(q *QueryCtx) {
 	e.Dict("query", q.LogQuery())
 	e.Dict("meta", q.LogServerMeta())
 	e.Dict("resp", q.LogResp())
+	// How long this query took, from the moment QueryCtx was created to the
+	// moment the response was ready. QueryCtx.Start was already being recorded
+	// but never surfaced, so log consumers had no way to tell a cache hit from
+	// a slow recursive lookup. Emitted via zerolog's Dur, which honours
+	// zerolog.DurationFieldUnit (milliseconds by default).
+	e.Dur("elapsed", time.Since(q.Start))
 	e.Msg("query log")
 }
 
