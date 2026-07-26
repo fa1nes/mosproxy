@@ -130,6 +130,14 @@ func (r *Router) AsyncSingleFlightPrefetch(key []byte, q *QueryCtx, u Upstream) 
 	qCopy := q.Copy()
 	go func() {
 		defer ReleaseQueryCtx(qCopy)
+		// Release the single-flight reservation when this prefetch finishes.
+		// Without it, Reserve() succeeds exactly once per key for the whole
+		// lifetime of the process: the entry is never removed from the queue, so
+		// every later attempt returns false and that key can never be refreshed
+		// again. With optimistic caching enabled this means a stale record keeps
+		// being served for the entire optimistic window. The map also grows
+		// without bound, which is remotely reachable via random subdomains.
+		defer r.prefetchSf.Done(sk)
 		r.DoPrefetch(utils.Str2BytesUnsafe(sk), qCopy, u)
 	}()
 }
