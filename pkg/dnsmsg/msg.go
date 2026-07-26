@@ -327,6 +327,12 @@ func (m *Msg) Pack(b []byte, compression bool, size int) ([]byte, error) {
 		defer releaseCompressionMap(compressionMap)
 	}
 
+	// Section counts must reflect what was actually written, not what we started
+	// with: records skipped by the size limit have to be subtracted, otherwise the
+	// header claims more records than the message contains and the peer either
+	// fails to parse it or silently treats a partial answer as complete.
+	var packedQuestions uint16
+
 	section := "question"
 	for _, q := range m.Questions {
 		if size > 0 {
@@ -343,9 +349,11 @@ func (m *Msg) Pack(b []byte, compression bool, size int) ([]byte, error) {
 		if b, err = q.pack(b, compressionMap, msgOff); err != nil {
 			return b, newSectionErr(section, err)
 		}
+		packedQuestions++
 	}
 
-	packRRs := func(b []byte, rrs []Resource, skipEDNS0 bool) ([]byte, error) {
+	packRRs := func(b []byte, rrs []Resource, skipEDNS0 bool) ([]byte, uint16, error) {
+		var packed uint16
 		for _, r := range rrs {
 			if skipEDNS0 && r.Hdr().Type == TypeOPT {
 				continue
@@ -353,7 +361,7 @@ func (m *Msg) Pack(b []byte, compression bool, size int) ([]byte, error) {
 			if size > 0 {
 				l, err := packRRLen(r, compressionMap)
 				if err != nil {
-					return b, err
+					return b, packed, err
 				}
 				if len(b)+l > size {
 					msgHdr.Truncated = true
@@ -362,20 +370,21 @@ func (m *Msg) Pack(b []byte, compression bool, size int) ([]byte, error) {
 			}
 			var err error
 			if b, err = packRR(r, b, compressionMap, msgOff); err != nil {
-				return b, err
+				return b, packed, err
 			}
+			packed++
 		}
-		return b, nil
+		return b, packed, nil
 	}
-	b, err := packRRs(b, m.Answers, false)
+	b, packedAnswers, err := packRRs(b, m.Answers, false)
 	if err != nil {
 		return b, newSectionErr("answers", err)
 	}
-	b, err = packRRs(b, m.Authorities, false)
+	b, packedAuthorities, err := packRRs(b, m.Authorities, false)
 	if err != nil {
 		return b, newSectionErr("authority", err)
 	}
-	b, err = packRRs(b, m.Additionals, eDNS0Opt != nil)
+	b, packedAdditionals, err := packRRs(b, m.Additionals, eDNS0Opt != nil)
 	if err != nil {
 		return b, newSectionErr("additional", err)
 	}
@@ -386,7 +395,19 @@ func (m *Msg) Pack(b []byte, compression bool, size int) ([]byte, error) {
 		if err != nil {
 			return b, newSectionErr("edns0", err)
 		}
+		packedAdditionals++
 	}
+
+	// Re-derive the header bits from msgHdr rather than reusing the ones captured
+	// before packing. msgHdr is the copy the truncation logic above writes to, so
+	// without this the TC flag it set was simply thrown away: a client receiving a
+	// shortened answer saw TC=0, had no idea anything was missing, and therefore
+	// never retried over TCP.
+	_, h.bits = msgHdr.Pack()
+	h.questions = packedQuestions
+	h.answers = packedAnswers
+	h.authorities = packedAuthorities
+	h.additionals = packedAdditionals
 
 	h.pack(b[msgOff : msgOff+12])
 	return b, nil
