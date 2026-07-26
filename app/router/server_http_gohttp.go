@@ -290,7 +290,12 @@ func (h *httpHandler) readReqMsg(w http.ResponseWriter, req *http.Request) *dnsm
 		}
 		buf := pool.GetBuf(msgSize)
 		defer pool.ReleaseBuf(buf)
-		_, err := base64.RawURLEncoding.Decode(buf, utils.Str2BytesUnsafe(s))
+		// DecodedLen is only an upper bound -- the decoder skips characters such as
+		// newlines, so fewer bytes may be written. Handing the full buffer onwards
+		// would append whatever the pooled allocation still held from an earlier
+		// request to this query, and a compression pointer aimed at that tail would
+		// echo those bytes back to the client. Slice down to what was decoded.
+		n, err := base64.RawURLEncoding.Decode(buf, utils.Str2BytesUnsafe(s))
 		if err != nil {
 			h.logger.Warn().
 				Object("request", (*httpReqLoggerObj)(req)).
@@ -299,7 +304,7 @@ func (h *httpHandler) readReqMsg(w http.ResponseWriter, req *http.Request) *dnsm
 			w.WriteHeader(http.StatusBadRequest)
 			return nil
 		}
-		reqWireMsg = buf
+		reqWireMsg = buf[:n]
 
 	case http.MethodPost:
 		// Check Content-Type header
