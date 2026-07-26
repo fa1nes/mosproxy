@@ -138,7 +138,12 @@ func (ru *rule) _match(q *QueryCtx) bool {
 
 	if p := ru.cfg.Path; len(p) > 0 {
 		if strings.HasSuffix(p, "/") { // match url prefix
-			ok := len(q.Path) >= len(q.Path) && string(q.Path[0:len(p)]) == p
+			// The length guard used to compare len(q.Path) against itself, which is
+			// always true, so the slice below ran even when the request path was
+			// shorter than the prefix -- an out-of-range panic that takes the whole
+			// process down. Reachable whenever a prefix `path:` rule is configured
+			// and a shorter (or empty, e.g. from a UDP/TCP server) path arrives.
+			ok := len(q.Path) >= len(p) && string(q.Path[0:len(p)]) == p
 			if !ok {
 				return false
 			}
