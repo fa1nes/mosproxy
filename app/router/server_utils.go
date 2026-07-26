@@ -226,6 +226,18 @@ func parseQuery(q *QueryCtx, m *dnsmsg.Msg) bool {
 	}
 
 	q.Question.CopyFrom(m.Questions[0])
+	// Normalise the queried name to lower case. RFC 4343 requires DNS name
+	// comparison to be case-insensitive, and rule sets are already lower-cased
+	// when loaded (see domain_matcher), but the query name never was -- matching
+	// uses bytes.Compare, so "EXAMPLE.COM" missed every rule and fell through to
+	// the default route. That silently defeats domain-based routing (a domestic
+	// domain in caps gets sent abroad) and lets any reject rule be bypassed by
+	// flipping a single letter. It matters in practice because some resolvers
+	// deliberately randomise case (DNS 0x20) as an anti-spoofing measure.
+	// It also fixes cache-key fragmentation: the key is built from this name, so
+	// one domain otherwise had 2^labels distinct keys, letting a client flood the
+	// cache with case variants of a single name and evict everything else.
+	q.Question.Name.ToLower()
 	q.ClientECS = findECS(m)
 	return true
 }
