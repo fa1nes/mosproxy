@@ -10,6 +10,7 @@ import (
 
 type rule struct {
 	cfg       RuleConfig
+	cacheTag  string                  // cache key 隔离不同转发路径，规则更新后不复用旧路径答案
 	domainSet *DomainSet              // maybe nil
 	clientIp  *netlist.List[struct{}] // maybe nil
 	upstream  Upstream                // maybe nil
@@ -17,7 +18,8 @@ type rule struct {
 
 func (r *Router) loadRule(cfg RuleConfig) (*rule, error) {
 	ru := &rule{
-		cfg: cfg,
+		cfg:      cfg,
+		cacheTag: cfg.Forward,
 	}
 	if len(cfg.Domain) > 0 {
 		m := r.domainSets[cfg.Domain]

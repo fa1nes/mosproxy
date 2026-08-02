@@ -93,7 +93,7 @@ func (r *Router) BuiltInHandler(ctx context.Context, q *QueryCtx) {
 	// lookup cache
 	ckb := cacheKeyPool.Get()
 	defer cacheKeyPool.Release(ckb)
-	ckb.B = r.appendCacheKey(ckb.B, q)
+	ckb.B = r.appendCacheKey(ckb.B, q, matchedRule.cacheTag)
 	resp, t := r.cache.Get(ctx, ckb.B)
 	if resp != nil {
 		if r.needPrefetch(t) {

@@ -14,12 +14,17 @@ func SetEmptyRespMQ(q *QueryCtx, rcode dnsmsg.RCode) {
 }
 
 // append cache key for this query to b.
-func (r *Router) appendCacheKey(b []byte, q *QueryCtx) []byte {
+func (r *Router) appendCacheKey(b []byte, q *QueryCtx, routeTag string) []byte {
 	qName := q.Question.Name.Data()
 	b = append(b, byte(len(qName)))
 	b = append(b, qName...)
 	b = binary.BigEndian.AppendUint16(b, uint16(q.Question.Class))
 	b = binary.BigEndian.AppendUint16(b, uint16(q.Question.Type))
+	// 同一个域名在规则更新前后可能从动态/国外切到国内，或反向切换。
+	// 不把实际规则目标写进 key，reload 后仍会命中旧路径留下的乐观缓存，
+	// 最长可持续 optimistic_ttl。路由标签很短，换取规则立即生效是值得的。
+	b = append(b, byte(len(routeTag)))
+	b = append(b, routeTag...)
 
 	p := len(b)
 	b = append(b, 0)
