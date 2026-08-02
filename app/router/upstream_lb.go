@@ -16,10 +16,11 @@ import (
 )
 
 type LoadBalancer struct {
-	tag      string
-	logger   *zerolog.Logger
-	e        []*lbBackend                               // not zero
-	simpleFn func(s *lbSampler, q *QueryCtx) *lbBackend // simple from sampler, may return nil if no backend is available
+	tag         string
+	logger      *zerolog.Logger
+	e           []*lbBackend                               // not zero
+	fallThrough bool                                       // retry backends in order for the same query
+	simpleFn    func(s *lbSampler, q *QueryCtx) *lbBackend // simple from sampler, may return nil if no backend is available
 
 	idxM    sync.Mutex
 	sampler atomic.Pointer[lbSampler]
@@ -40,6 +41,7 @@ func (r *Router) initLoadBalancer(cfg *LoadBalancerConfig) error {
 			return s.simple(rand.Int())
 		}
 	case "fall_through":
+		lb.fallThrough = true
 		lb.simpleFn = func(s *lbSampler, q *QueryCtx) *lbBackend {
 			for _, b := range s.bs {
 				if b.rateLimiter == nil {
@@ -125,6 +127,38 @@ func (lb *LoadBalancer) Tag() string { return lb.tag }
 
 func (lb *LoadBalancer) Exchange(ctx context.Context, q *QueryCtx, m *dnsmsg.Msg) error {
 	s := lb.sampler.Load()
+	if lb.fallThrough {
+		var lastErr error
+		tried := false
+		for _, b := range s.bs {
+			if b.rateLimiter != nil && !b.rateLimiter.Allow() {
+				continue
+			}
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			tried = true
+			err := b.u.Exchange(ctx, q, m)
+			if err == nil {
+				resp := q.Resp()
+				if resp == nil || resp.RCode != dnsmsg.RCodeServerFailure {
+					return nil
+				}
+				// SERVFAIL is a valid DNS packet, so the transport reports success.
+				// For fall_through it still means this backend could not answer; release
+				// it before trying the next backend in the same client query.
+				q.SetResp(nil)
+				err = errors.New("backend returned SERVFAIL")
+			}
+			lastErr = err
+		}
+		if lastErr != nil {
+			return lastErr
+		}
+		if !tried {
+			return errors.New("no backend available")
+		}
+	}
 	b, zero := s.fastPath()
 	if zero {
 		// Try to start a ping test in a random upstream.
