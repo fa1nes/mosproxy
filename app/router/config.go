@@ -24,6 +24,12 @@ type Config struct {
 	ECS   ECSConfig   `yaml:"ecs"`
 	API   APIConfig   `yaml:"api"`
 
+	// StripECH removes the ech SvcParam from SVCB/HTTPS answers. Defaults to true when
+	// unset, hence the pointer: a plain bool would default to false, so every existing
+	// config file would silently keep leaking ECH keys after an upgrade and the only
+	// symptom would be domain routing quietly breaking.
+	StripECH *bool `yaml:"strip_ech"`
+
 	Middleware []map[string]any `yaml:"middleware"`
 }
 

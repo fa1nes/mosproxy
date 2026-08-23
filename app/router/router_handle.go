@@ -160,7 +160,7 @@ func (r *Router) DoPrefetch(key []byte, q *QueryCtx, u Upstream) {
 }
 
 // forward query to upstream and set the response.
-// Will remove edns0 from resp.
+// Will remove edns0 from resp, and the ech SvcParam unless disabled.
 func (r *Router) forward(ctx context.Context, q *QueryCtx, upstream Upstream) error {
 	m := r.MakeQueryMsg(q)
 	defer dnsmsg.ReleaseMsg(m)
@@ -169,10 +169,22 @@ func (r *Router) forward(ctx context.Context, q *QueryCtx, upstream Upstream) er
 	if err != nil {
 		return fmt.Errorf("failed to exchange, %w", err)
 	}
-	if r := q.Resp(); r != nil {
-		dnsmsg.RemoveEDNS0(r)
+	if resp := q.Resp(); resp != nil {
+		dnsmsg.RemoveEDNS0(resp)
+		// Strip here, before the caller stores the response: this is the single point
+		// both the live path and DoPrefetch go through, and rewriting once on the way in
+		// beats rewriting on every cache hit on the way out.
+		if r.stripECHEnabled() && dnsmsg.StripECH(resp) {
+			r.echStrippedTotal.Inc()
+		}
 	}
 	return nil
+}
+
+// stripECHEnabled reports whether ech removal is on. Absent config means on — see the
+// comment on Config.StripECH for why this is not a plain bool.
+func (r *Router) stripECHEnabled() bool {
+	return r.opt.StripECH == nil || *r.opt.StripECH
 }
 
 // Make a dns msg from q, according to r's settings.

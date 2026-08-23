@@ -136,6 +136,7 @@ type Router struct {
 	queryTotal         prometheus.Counter
 	queryCacheHitTotal prometheus.Counter
 	prefetchTotal      prometheus.Counter
+	echStrippedTotal   prometheus.Counter
 }
 
 func Run(cfg *Config) (_ *Router, err error) {
@@ -167,6 +168,10 @@ func Run(cfg *Config) (_ *Router, err error) {
 			Name: "prefetch_total",
 			Help: "The total number of prefetched queries",
 		}),
+		echStrippedTotal: prometheus.NewCounter(prometheus.CounterOpts{
+			Name: "ech_stripped_total",
+			Help: "The total number of responses that had an ech SvcParam removed",
+		}),
 	}
 
 	// close r if failed to init
@@ -180,6 +185,7 @@ func Run(cfg *Config) (_ *Router, err error) {
 		r.queryTotal,
 		r.queryCacheHitTotal,
 		r.prefetchTotal,
+		r.echStrippedTotal,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("failed to reg prometheus metrics, %w", err)
