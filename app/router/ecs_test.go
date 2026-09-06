@@ -108,3 +108,26 @@ func Test_packECS(t *testing.T) {
 	testFn("1::2/127")
 	testFn("1::2/128")
 }
+
+func Test_ecsAddrIsGlobal(t *testing.T) {
+	global := []string{"1.2.3.4", "202.165.97.53", "116.169.38.235", "2400:3200::1"}
+	local := []string{
+		"0.0.0.0", "10.1.2.3", "100.64.0.1", "127.0.0.1", "169.254.1.1",
+		"172.16.0.1", "192.0.0.1", "192.0.2.1", "192.88.99.1", "192.168.1.1",
+		"198.18.0.1", "198.51.100.1", "203.0.113.1", "224.0.0.1", "255.255.255.255",
+		"::1", "fc00::1", "fe80::1", "ff02::1",
+	}
+	for _, s := range global {
+		if !ecsAddrIsGlobal(netip.MustParseAddr(s)) {
+			t.Errorf("ecsAddrIsGlobal(%s) = false, want true", s)
+		}
+	}
+	for _, s := range local {
+		if ecsAddrIsGlobal(netip.MustParseAddr(s)) {
+			t.Errorf("ecsAddrIsGlobal(%s) = true, want false", s)
+		}
+	}
+	if ecsAddrIsGlobal(netip.Addr{}) {
+		t.Error("ecsAddrIsGlobal(invalid) = true, want false")
+	}
+}

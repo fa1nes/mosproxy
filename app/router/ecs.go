@@ -108,3 +108,44 @@ func makeEdns0ClientSubnetReqOpt(p netip.Prefix) pool.Buffer {
 	bb[7] = 0
 	return b
 }
+
+// ecsAddrIsGlobal reports whether addr is globally routable unicast space, and
+// therefore carries locality an authoritative server can act on. Addresses
+// outside it (loopback, private, CGNAT, link-local, benchmarking, documentation
+// and multicast ranges) tell an upstream nothing, so forwarding them as a
+// client subnet only leaks topology.
+func ecsAddrIsGlobal(addr netip.Addr) bool {
+	if !addr.IsValid() {
+		return false
+	}
+	addr = addr.Unmap()
+	if addr.IsLoopback() || addr.IsMulticast() || addr.IsUnspecified() ||
+		addr.IsPrivate() || addr.IsLinkLocalUnicast() ||
+		addr.IsLinkLocalMulticast() || addr.IsInterfaceLocalMulticast() {
+		return false
+	}
+	if addr.Is4() {
+		b := addr.As4()
+		switch {
+		case b[0] == 0 || b[0] >= 224:
+			return false
+		case b[0] == 100 && b[1] >= 64 && b[1] <= 127:
+			return false
+		case b[0] == 192 && b[1] == 0 && (b[2] == 0 || b[2] == 2):
+			return false
+		case b[0] == 192 && b[1] == 88 && b[2] == 99:
+			return false
+		case b[0] == 198 && (b[1] == 18 || b[1] == 19):
+			return false
+		case b[0] == 198 && b[1] == 51 && b[2] == 100:
+			return false
+		case b[0] == 203 && b[1] == 0 && b[2] == 113:
+			return false
+		}
+		return true
+	}
+	if addr.Is6() {
+		return addr.As16()[0]&0xe0 == 0x20
+	}
+	return false
+}

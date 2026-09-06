@@ -31,8 +31,12 @@ func (r *Router) serverEntryHandler(q *QueryCtx) {
 		if r.ecsZone != nil {
 			q.ECSZone, _ = r.ecsZone.Mark(q.ECS2Upstream.Addr())
 
-			// No zone, assume it is local, don not send ecs to upstream
-			if len(q.ECSZone) == 0 {
+			// An address the zone file does not cover is not evidence that the
+			// client is local -- only a non-global address is. Clearing ECS for
+			// every unmarked address silently disables subnet-aware answers for
+			// all public space the zone file happens to miss, and appendCacheKey
+			// already shards by the raw prefix when the zone name is empty.
+			if len(q.ECSZone) == 0 && !ecsAddrIsGlobal(q.ECS2Upstream.Addr()) {
 				q.ECS2Upstream = netip.Prefix{}
 			}
 		}
