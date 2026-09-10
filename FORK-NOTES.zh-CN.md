@@ -67,6 +67,30 @@ RFC 4343 要求大小写不敏感比较，且部分解析器会故意随机化�
 本次查询尾部；若报文中的压缩指针指向那段，这些残留会被当成域名解析，并原样回显在
 应答的 question section 里。改为按实际解码长度切片。
 
+**9. 缓存条目没有按转发路由隔离** — `app/router/router_utils.go`、`rule.go`
+
+缓存 key 只由查询本身（名字/类型/ECS）构成，不含命中的 `forward` 规则。两条规则把同一个
+域名转给不同上游时，它们共用同一条缓存：先到的那个上游的应答会被另一条路由的客户端拿到。
+对按地域分流的部署这是直接的正确性问题——境外线路可能读到境内上游写进去的应答，反之亦然，
+而且完全不报错。修法是把命中的 forward tag 一并写进 key。
+
+**10. `fall_through` 后端在单次查询内不重试** — `app/router/upstream_lb.go`
+
+`fall_through` 的语义是"这个后端不行就换下一个"，但传输错误与 SERVFAIL 只会影响**后续**
+查询的选择，当次查询直接把失败结果返回给客户端。于是每个后端出问题时都要先赔上一次可见的
+解析失败。改为在同一次查询内就向下一个后端重试。
+
+**11. ECS 被过度抑制** — `app/router/ecs.go`、`router_handle.go`
+
+配了 `ecs.ip_zone` 时，凡是 zone 文件没标记的地址都被当作"本地客户端"而清掉 ECS。但 zone
+文件是从归属库生成的，只覆盖该库标注过的空间——本部署实测**路由快照里 69.85% 的大陆 IPv4
+空间没有标记**，这些客户端的 ECS 被整个丢弃，上游只能按解析器位置作答，恰好是 ECS 要避免
+的事，而且没有任何地方报告。`appendCacheKey` 本来就能处理"没有 zone 名"（退化成按原始前缀
+分片），也就是说这个特性的两半自相矛盾：缓存准备好了按 /24 分片，处理器却先把前缀毁掉了。
+改为只对**确实不携带任何上游可用地域信息**的地址抑制——回环、私网、CGNAT、链路本地、
+benchmarking、文档与组播。局域网和隧道客户端行为不变，公网客户端无论 zone 文件有没有点名
+它的网段，都能拿到按子网作答的结果。
+
 ## 新增
 
 **查询日志输出 `elapsed`** — `app/router/log.go`
@@ -75,10 +99,30 @@ RFC 4343 要求大小写不敏感比较，且部分解析器会故意随机化�
 加 `e.Dur("elapsed", time.Since(q.Start))` 后（单位毫秒）：缓存命中约 `0.09`，冷递归约 `800`，
 一眼可辨。
 
+**TLS 证书热重载** — `app/router/tls.go`
+
+证书只在启动时读一次，续期后唯一的生效方式是重启——对 DNS 服务器意味着掐断所有在途的
+DoH/DoT 连接、丢掉整个缓存、重置 TLS session ticket key。用短效证书时（Let's Encrypt 的
+IP 证书约 6 天）这笔开销每隔几天就要付一次。改为经 `GetCertificate` 提供证书，按 mtime
+变化惰性重载，并限速到每 10 秒一次，让握手路径上不出现 stat。**重载失败时保留旧证书**：
+ACME 客户端不会原子地同时写入证书和私钥，在那个窗口里握手失败比继续用一张仍然有效的旧证书
+更糟。
+
+**剥离 SVCB/HTTPS 应答里的 `ech` SvcParam** — `pkg/dnsmsg/svcb.go`
+
+Cloudflare 正在铺开 Encrypted Client Hello。客户端一旦从 HTTPS 记录里读到 `ech` 参数，
+就会加密真实 SNI 并在明文 ClientHello 里放一个掩护名（`cloudflare-ech.com`）。所有按域名
+分流的代理从此看到的都是掩护名，域名规则**静默失配**、流量落到默认出口，而 DNS 解析、TLS
+握手和页面加载全都照常成功。`RuleConfig` 只能按 domain/server/path/client_ip 匹配，配置层
+无解，只能在报文层处理。HTTPS(65) 在 `unpackResource` 里走 `RawResource`、保留线格式 RDATA，
+因此直接在原始字节上做参数摘除；SvcParams 是升序 TLV 列表，删掉一项仍然有序，可以零分配就地
+压缩。**只移除 key 5，不丢弃整条记录**——丢掉会连 `alpn="h3"`（没有 HTTP/3）和
+`ipv4hint`/`ipv6hint` 一起失去。
+
 **CI 构建静态二进制** — `.github/workflows/release-binaries.yml`
 
-上游只发 Docker 镜像。打 tag 即产出 linux/amd64 与 arm64 静态二进制 + SHA256，
-裸机部署不必装 Docker 或 Go。
+上游只发 Docker 镜像。打 tag 即产出 linux/amd64 与 arm64 静态二进制 + SHA256 + build-id，
+裸机部署不必装 Docker 或 Go。`build-id` 供部署脚本核对拿到的产物确实是这个 tag 构建的。
 
 ## 合并上游更新
 
