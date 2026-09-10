@@ -57,6 +57,7 @@ jobs:
             -ldflags "-s -w -X main.version=${{ steps.ver.outputs.version }}" \
             -o "mosproxy-linux-${{ matrix.goarch }}" .
           sha256sum "mosproxy-linux-${{ matrix.goarch }}" > "mosproxy-linux-${{ matrix.goarch }}.sha256"
+          printf '%s\n' "${{ steps.ver.outputs.version }}" > "mosproxy-linux-${{ matrix.goarch }}.build-id"
 
       - name: 冒烟测试(仅 amd64，runner 本身就是 amd64)
         if: matrix.goarch == 'amd64'
@@ -71,6 +72,7 @@ jobs:
           path: |
             mosproxy-linux-${{ matrix.goarch }}
             mosproxy-linux-${{ matrix.goarch }}.sha256
+            mosproxy-linux-${{ matrix.goarch }}.build-id
 
   release:
     # 只有打 tag 才发 Release；手动触发时上面的 artifact 已经够用了
