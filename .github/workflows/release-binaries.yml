@@ -1,9 +1,3 @@
-# 构建可直接下载的静态二进制并发布 Release。
-#
-# 上游只提供 Docker 镜像(build-edge.yml)，但在裸机上部署时更想直接拿一个二进制，
-# 而不是为了跑 DNS 转发在服务器上装一整套 Docker，也不想为了编译去装 Go 工具链。
-# 这个 workflow 就是补这一块：打 tag 即产出 linux/amd64 与 linux/arm64 的静态二进制，
-# 附带 SHA256 校验和，方便部署脚本直接下载校验后使用。
 name: Release binaries
 
 on:
@@ -13,7 +7,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "手动构建时使用的版本号(如 v0.0.1-test)"
+        description: "Version to stamp into a manual build, e.g. v0.0.1-test"
         required: false
         default: "manual"
 
@@ -32,11 +26,10 @@ jobs:
 
       - uses: actions/setup-go@v5
         with:
-          # 跟着 go.mod 里声明的版本走，避免这里写死了版本以后和 go.mod 脱节
           go-version-file: go.mod
           cache: true
 
-      - name: 确定版本号
+      - name: resolve version
         id: ver
         run: |
           if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
@@ -45,21 +38,19 @@ jobs:
             echo "version=${{ github.event.inputs.tag }}/${GITHUB_SHA::8}" >> "$GITHUB_OUTPUT"
           fi
 
-      - name: 编译
+      - name: build
         env:
           CGO_ENABLED: "0"
           GOOS: linux
           GOARCH: ${{ matrix.goarch }}
         run: |
-          # -s -w 去掉符号表和调试信息，-trimpath 去掉构建机的绝对路径
-          # (既能显著减小体积，也避免把构建环境的目录结构带进公开产物里)
           go build -trimpath \
             -ldflags "-s -w -X main.version=${{ steps.ver.outputs.version }}" \
             -o "mosproxy-linux-${{ matrix.goarch }}" .
           sha256sum "mosproxy-linux-${{ matrix.goarch }}" > "mosproxy-linux-${{ matrix.goarch }}.sha256"
           printf '%s\n' "${{ steps.ver.outputs.version }}" > "mosproxy-linux-${{ matrix.goarch }}.build-id"
 
-      - name: 冒烟测试(仅 amd64，runner 本身就是 amd64)
+      - name: smoke test
         if: matrix.goarch == 'amd64'
         run: |
           ./mosproxy-linux-amd64 --version
@@ -75,7 +66,6 @@ jobs:
             mosproxy-linux-${{ matrix.goarch }}.build-id
 
   release:
-    # 只有打 tag 才发 Release；手动触发时上面的 artifact 已经够用了
     if: github.ref_type == 'tag'
     needs: build
     runs-on: ubuntu-latest
@@ -87,5 +77,6 @@ jobs:
 
       - uses: softprops/action-gh-release@v2
         with:
+          name: ${{ github.ref_name }}
+          body: ""
           files: dist/*
-          generate_release_notes: true
