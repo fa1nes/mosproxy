@@ -10,6 +10,20 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
+func TestCopiedNameOwnsItsLabels(t *testing.T) {
+	src := NewName()
+	require.NoError(t, src.Parse("www.example.com"))
+	var dst Name
+	dst.CopyFrom(*src)
+	ReleaseName(src)
+	require.Equal(t, "www.example.com", string(dst.AppendReadableTo(nil)))
+
+	reused := NewName()
+	require.NoError(t, reused.Parse("other.test"))
+	defer ReleaseName(reused)
+	require.Equal(t, "www.example.com", string(dst.AppendReadableTo(nil)))
+}
+
 func TestParse(t *testing.T) {
 	r := require.New(t)
 

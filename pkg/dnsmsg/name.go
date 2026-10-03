@@ -47,7 +47,9 @@ func (n *Name) Reset() {
 func (n *Name) CopyFrom(n2 Name) {
 	n.Reset()
 	n.b = append(n.b, n2.b...)
-	n.s = append(n.s, n2.s...)
+	if n.parseLabels() != nil {
+		n.s = n.s[:0]
+	}
 }
 
 // Get a empty name from buffer pool.
