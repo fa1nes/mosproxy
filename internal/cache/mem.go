@@ -79,6 +79,18 @@ func (c *MemoryCache) Get(k []byte) (v []byte, t Times) {
 	return nil, Times{} // miss
 }
 
+func (c *MemoryCache) DeleteFunc(match func(key []byte) bool) int {
+	removed := 0
+	c.backend.DeleteByFunc(func(key string, _ cacheEntry) bool {
+		if match(utils.Str2BytesUnsafe(key)) {
+			removed++
+			return true
+		}
+		return false
+	})
+	return removed
+}
+
 // Always returns nil.
 func (c *MemoryCache) Close() error {
 	c.backend.Close()

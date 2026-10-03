@@ -1,6 +1,7 @@
 package router
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"sync"
@@ -239,6 +240,31 @@ func (c *CacheCtl) getRedisCache(ctx context.Context, key []byte) (*dnsmsg.Msg, 
 		return m, t
 	}
 	return nil, cache.Times{}
+}
+
+func (c *CacheCtl) Flush(name []byte) int {
+	if c.memory == nil {
+		return 0
+	}
+	return c.memory.DeleteFunc(func(key []byte) bool {
+		return len(name) == 0 || keyUnderName(key, name)
+	})
+}
+
+func keyUnderName(key, name []byte) bool {
+	if len(key) == 0 || 1+int(key[0]) > len(key) {
+		return false
+	}
+	qname := key[1 : 1+int(key[0])]
+	for i := 0; i < len(qname); i += 1 + int(qname[i]) {
+		if bytes.Equal(qname[i:], name) {
+			return true
+		}
+		if qname[i] == 0 {
+			return false
+		}
+	}
+	return false
 }
 
 func (c *CacheCtl) close() {

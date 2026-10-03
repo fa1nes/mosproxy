@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"net"
 	"net/http"
+	"strconv"
 	"time"
 
+	"github.com/IrineSistiana/mosproxy/pkg/dnsmsg"
 	"github.com/go-chi/chi/v5"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 )
@@ -46,6 +48,26 @@ func (r *Router) initApiServer(cfg *APIConfig) error {
 				Object("request", (*httpReqLoggerObj)(req)).
 				Dur("elapse", time.Since(start)).
 				Msg("files reloaded")
+		})
+		route.Get("/flush", func(w http.ResponseWriter, req *http.Request) {
+			var wire []byte
+			if domain := req.URL.Query().Get("domain"); domain != "" {
+				name := dnsmsg.NewName()
+				defer dnsmsg.ReleaseName(name)
+				if err := name.Parse(domain); err != nil {
+					w.WriteHeader(http.StatusBadRequest)
+					w.Write([]byte(err.Error()))
+					return
+				}
+				name.ToLower()
+				wire = name.Data()
+			}
+			removed := r.cache.Flush(wire)
+			r.logger.Info().
+				Object("request", (*httpReqLoggerObj)(req)).
+				Int("removed", removed).
+				Msg("cache flushed")
+			w.Write([]byte(strconv.Itoa(removed)))
 		})
 	})
 
