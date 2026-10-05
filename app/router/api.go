@@ -50,6 +50,11 @@ func (r *Router) initApiServer(cfg *APIConfig) error {
 				Msg("files reloaded")
 		})
 		route.Get("/flush", func(w http.ResponseWriter, req *http.Request) {
+			if r.cache == nil {
+				w.WriteHeader(http.StatusServiceUnavailable)
+				w.Write([]byte("cache is disabled"))
+				return
+			}
 			var wire []byte
 			if domain := req.URL.Query().Get("domain"); domain != "" {
 				name := dnsmsg.NewName()

@@ -100,6 +100,12 @@ benchmarking、文档与组播。局域网和隧道客户端行为不变，公�
 日志里的预取失败**一半以上看不出是哪个域名**（本部署 48 小时 390 条超时里 220 条是乱码名），
 对副本调 `ToLower` 还会改写别人的缓冲区。修法是复制字节后在自己的缓冲区上重建标签。
 
+**13. 畸形的线格式域名让 `parseLabels` 越界 panic** — `pkg/dnsmsg/name.go`
+
+`parseLabels` 按长度字节切片，不检查是否越过缓冲区末尾。`ParseNameRaw` 和 `CopyFrom` 都会把
+外部给的字节交给它，一个 `{63, 'a'}` 就是 `slice bounds out of range`。现在长度超过 63 或越界都返回
+`errNameBufTooShort`。顺带修了 `CopyFrom` 把名字复制到自己身上时先清零再复制、结果变成根域的问题。
+
 ## 新增
 
 **`GET /ctl/flush` 清缓存** — `app/router/api.go`、`cache.go`、`internal/cache/mem.go`
@@ -108,7 +114,7 @@ benchmarking、文档与组播。局域网和隧道客户端行为不变，公�
 上游已经改了答案（比如把某个域名改由另一条出口解析），客户端仍会拿到旧结果，最长可达乐观窗口。
 `/ctl/flush?domain=example.com` 删除该域名及其全部子域的条目，按标签边界匹配
 （`xexample.com` 不受影响）；不带参数清空整个内存缓存。返回删除的条目数。只作用于内存缓存，
-配了 Redis 的部署 Redis 里的条目不受影响。
+配了 Redis 的部署 Redis 里的条目不受影响；没配缓存时返回 503。
 
 **查询日志输出 `elapsed`** — `app/router/log.go`
 

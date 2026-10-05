@@ -45,9 +45,11 @@ func (n *Name) Reset() {
 }
 
 func (n *Name) CopyFrom(n2 Name) {
-	n.Reset()
-	n.b = append(n.b, n2.b...)
+	n.b = append(n.b[:0], n2.b...)
+	clear(n.s)
+	n.s = n.s[:0]
 	if n.parseLabels() != nil {
+		clear(n.s)
 		n.s = n.s[:0]
 	}
 }
@@ -280,6 +282,9 @@ func (n *Name) parseLabels() error {
 		}
 		start := i + 1
 		end := start + l
+		if l > 63 || end > len(n.b) {
+			return errNameBufTooShort
+		}
 		n.s = append(n.s, n.b[start:end])
 		i += 1 + l
 	}

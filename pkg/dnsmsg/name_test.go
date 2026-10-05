@@ -24,6 +24,24 @@ func TestCopiedNameOwnsItsLabels(t *testing.T) {
 	require.Equal(t, "www.example.com", string(dst.AppendReadableTo(nil)))
 }
 
+func TestCopyingANameOntoItselfKeepsIt(t *testing.T) {
+	n := NewName()
+	defer ReleaseName(n)
+	require.NoError(t, n.Parse("www.example.com"))
+	n.CopyFrom(*n)
+	require.Equal(t, "www.example.com", string(n.AppendReadableTo(nil)))
+}
+
+func TestMalformedWireNameIsAnErrorNotAPanic(t *testing.T) {
+	for _, raw := range [][]byte{{63, 'a'}, {3, 'a', 'b'}, {0xc0, 0x0c}, {3, 'a', 'b', 'c'}} {
+		n := NewName()
+		require.Error(t, ParseNameRaw(n, raw), "%v", raw)
+		ReleaseName(n)
+		var dst Name
+		require.NotPanics(t, func() { dst.CopyFrom(Name{b: raw}) }, "%v", raw)
+	}
+}
+
 func TestParse(t *testing.T) {
 	r := require.New(t)
 

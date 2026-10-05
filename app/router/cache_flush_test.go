@@ -1,11 +1,16 @@
 package router
 
 import (
+	"net/http"
+	"net/http/httptest"
 	"testing"
 	"time"
 
 	"github.com/IrineSistiana/mosproxy/internal/cache"
+	"github.com/IrineSistiana/mosproxy/internal/mlog"
 	"github.com/IrineSistiana/mosproxy/pkg/dnsmsg"
+	"github.com/go-chi/chi/v5"
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/stretchr/testify/require"
 )
 
@@ -56,4 +61,17 @@ func TestFlushRemovesOnlyTheDomainAndItsSubdomains(t *testing.T) {
 	}
 	require.Equal(t, 2, ctl.Flush(nil))
 	require.Equal(t, 0, (&CacheCtl{}).Flush(nil))
+}
+
+func TestFlushWithoutACacheAnswersInsteadOfPanicking(t *testing.T) {
+	r := &Router{logger: mlog.L(), metricsReg: prometheus.NewRegistry(), apiMux: chi.NewMux()}
+	require.NoError(t, r.initApiServer(&APIConfig{Addr: "127.0.0.1:0"}))
+	defer func() {
+		for _, closer := range r.serverClosers {
+			closer()
+		}
+	}()
+	w := httptest.NewRecorder()
+	r.apiMux.ServeHTTP(w, httptest.NewRequest("GET", "/ctl/flush?domain=sb.sb", nil))
+	require.Equal(t, http.StatusServiceUnavailable, w.Code)
 }
