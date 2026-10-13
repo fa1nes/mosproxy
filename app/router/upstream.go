@@ -60,6 +60,8 @@ func (r *Router) initUpstream(cfg *UpstreamConfig) error {
 	return nil
 }
 
+const hcConfirmTimeout = 2 * time.Second
+
 type Upstream interface {
 	// Exchange send m to upstream. And set the resp in q.
 	// q is for info only, Exchange should not change the info in q, except the resp.
@@ -82,6 +84,7 @@ type UpstreamWrapper struct {
 
 	hcLock         sync.Mutex
 	continuousErr  int
+	hcConfirming   bool
 	offline        bool
 	offlineTime    time.Time
 	cancelPingLoop context.CancelFunc
@@ -262,24 +265,48 @@ func (b *UpstreamWrapper) hcSucceed() {
 }
 
 // Notify health check the upstream hcFailed once.
-// May trigger offline status if condition meets.
+// When failures reach max_fails, the upstream is pinged before it is marked
+// offline: a recursive resolver that times out on one slow zone is still
+// alive, and failing over to the next backend would only serve worse answers.
 func (b *UpstreamWrapper) hcFailed() {
 	b.hcLock.Lock()
 	b.continuousErr++
-	if !b.offline && b.continuousErr >= b.maxFails {
-		b.offline = true
-		b.offlineTime = time.Now()
-		ctx, cancel := context.WithCancel(b.ctx)
-		b.cancelPingLoop = cancel
+	if b.offline || b.hcConfirming || b.continuousErr < b.maxFails {
 		b.hcLock.Unlock()
-		go func() {
-			b.logger.Error().Msg("upstream offline")
-			b.hcRebuildLbsIdx()
-			b.hcOfflinePingLoop(ctx)
-		}()
 		return
 	}
+	b.hcConfirming = true
 	b.hcLock.Unlock()
+	go b.hcConfirmOffline()
+}
+
+func (b *UpstreamWrapper) hcConfirmOffline() {
+	ctx, cancel := context.WithTimeout(b.ctx, hcConfirmTimeout)
+	err := b.Ping(ctx)
+	cancel()
+
+	b.hcLock.Lock()
+	b.hcConfirming = false
+	if b.offline || b.ctx.Err() != nil {
+		b.hcLock.Unlock()
+		return
+	}
+	if err == nil {
+		fails := b.continuousErr
+		b.continuousErr = 0
+		b.hcLock.Unlock()
+		b.logger.Info().Int("continuous_fails", fails).Msg("queries failed but upstream answers ping, keeping it online")
+		return
+	}
+	b.offline = true
+	b.offlineTime = time.Now()
+	loopCtx, loopCancel := context.WithCancel(b.ctx)
+	b.cancelPingLoop = loopCancel
+	b.hcLock.Unlock()
+
+	b.logger.Error().Err(err).Msg("upstream offline")
+	b.hcRebuildLbsIdx()
+	b.hcOfflinePingLoop(loopCtx)
 }
 
 // Try to start a health check ping asynchronously if upstream is offline.
