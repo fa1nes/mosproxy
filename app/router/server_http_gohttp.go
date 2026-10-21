@@ -201,7 +201,7 @@ func (h *httpHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 	var respBuf pool.Buffer
 	if ok := parseQuery(q, m); !ok {
 		resp := makeEmptyRespM(m, dnsmsg.RCodeRefused)
-		respBuf = serverFinalRespB(m, resp, true, 0)
+		respBuf = serverFinalRespHTTP(m, resp)
 		dnsmsg.ReleaseMsg(resp)
 	} else {
 		q.ServerTag = h.cfg.Tag
@@ -216,7 +216,7 @@ func (h *httpHandler) ServeHTTP(w http.ResponseWriter, req *http.Request) {
 		q.Path = append(q.Path, req.URL.Path...)
 
 		h.r.serverEntryHandler(q)
-		respBuf = serverFinalRespB(m, q.Resp(), false, udpSize)
+		respBuf = serverFinalRespHTTP(m, q.Resp())
 	}
 
 	w.Header().Set("Content-Type", "application/dns-message")
@@ -261,7 +261,7 @@ func (h *httpHandler) readReqMsg(w http.ResponseWriter, req *http.Request) *dnsm
 	switch req.Method {
 	case http.MethodGet:
 		// Check accept header
-		if acceptTyp := req.Header.Get("Accept"); acceptTyp != "application/dns-message" {
+		if acceptTyp := req.Header.Get("Accept"); !acceptsDNSMessage(acceptTyp) {
 			h.logger.Warn().
 				Object("request", (*httpReqLoggerObj)(req)).
 				Str("value", acceptTyp).

@@ -185,7 +185,7 @@ func (h *fasthttpHandler) HandleFastHTTP(ctx *fasthttp.RequestCtx) {
 	var respBuf pool.Buffer
 	if ok := parseQuery(q, m); !ok {
 		resp := makeEmptyRespM(m, dnsmsg.RCodeRefused)
-		respBuf = serverFinalRespB(m, resp, true, 0)
+		respBuf = serverFinalRespHTTP(m, resp)
 		dnsmsg.ReleaseMsg(resp)
 	} else {
 		q.ServerTag = h.cfg.Tag
@@ -200,7 +200,7 @@ func (h *fasthttpHandler) HandleFastHTTP(ctx *fasthttp.RequestCtx) {
 		q.Path = append(q.Path, ctx.Path()...)
 
 		h.r.serverEntryHandler(q)
-		respBuf = serverFinalRespB(m, q.Resp(), false, udpSize)
+		respBuf = serverFinalRespHTTP(m, q.Resp())
 	}
 
 	ctx.Response.Header.Add("Content-Type", "application/dns-message")
@@ -220,7 +220,7 @@ func (h *fasthttpHandler) readReqMsg(ctx *fasthttp.RequestCtx) *dnsmsg.Msg {
 	switch {
 	case ctx.IsGet():
 		// Check accept header
-		if acceptTyp := ctx.Request.Header.Peek("Accept"); string(acceptTyp) != "application/dns-message" {
+		if acceptTyp := ctx.Request.Header.Peek("Accept"); !acceptsDNSMessage(string(acceptTyp)) {
 			h.logger.Warn().
 				Object("request", (*fasthttpReqLoggerObj)(ctx)).
 				Bytes("value", acceptTyp).

@@ -62,6 +62,42 @@ func packRespTCP(m *dnsmsg.Msg) (pool.Buffer, error) {
 // If resp must not be nil.
 // If tcp is true, size is ignored.
 // If resp failed to pack, an header will be packed.
+const httpRespSize = 65535
+
+func serverFinalRespHTTP(req, resp *dnsmsg.Msg) pool.Buffer {
+	return serverFinalRespB(req, resp, false, httpRespSize)
+}
+
+func acceptsDNSMessage(v string) bool {
+	if strings.TrimSpace(v) == "" {
+		return true
+	}
+	for _, part := range strings.Split(v, ",") {
+		typ, params, _ := strings.Cut(part, ";")
+		typ = strings.ToLower(strings.TrimSpace(typ))
+		if typ != "application/dns-message" && typ != "application/*" && typ != "*/*" {
+			continue
+		}
+		if qualityIsZero(params) {
+			continue
+		}
+		return true
+	}
+	return false
+}
+
+func qualityIsZero(params string) bool {
+	for _, p := range strings.Split(params, ";") {
+		k, v, ok := strings.Cut(strings.TrimSpace(p), "=")
+		if !ok || strings.ToLower(strings.TrimSpace(k)) != "q" {
+			continue
+		}
+		v = strings.TrimSpace(v)
+		return strings.HasPrefix(v, "0") && strings.Trim(v, "0.") == ""
+	}
+	return false
+}
+
 func serverFinalRespB(req, resp *dnsmsg.Msg, tcp bool, size int) pool.Buffer {
 
 	// Set resp hdr according to q.
@@ -90,7 +126,7 @@ func serverFinalRespB(req, resp *dnsmsg.Msg, tcp bool, size int) pool.Buffer {
 		postProcessResp(4096)
 		b, err = packRespTCP(resp)
 	} else {
-		postProcessResp(uint16(size))
+		postProcessResp(uint16(min(size, 4096)))
 		b, err = packResp(resp, size)
 	}
 	if err == nil {
