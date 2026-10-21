@@ -16,6 +16,11 @@ import (
 	"github.com/IrineSistiana/mosproxy/pkg/dnsmsg"
 )
 
+// udpResendInterval is the first resend delay for an unanswered udp query.
+// Each following resend waits twice as long, so a server that never answers
+// sees a handful of copies instead of one per second.
+var udpResendInterval = time.Second
+
 var (
 	errPipelineConnClosed = errors.New("pipeline connection closed")
 	errPipelineConnEoL    = errors.New("pipeline connection eol")
@@ -64,8 +69,9 @@ func (c *pipelineConn) exchange(ctx context.Context, m *dnsmsg.Msg) (*dnsmsg.Msg
 	}
 	defer c.deleteQueueC(qid)
 
-	if !c.t.opts.IsTCP { // If udp, resend udp package every 1s.
-		resend := time.NewTicker(time.Second)
+	if !c.t.opts.IsTCP { // If udp, resend with exponential backoff (1s, 2s, 4s...).
+		interval := udpResendInterval
+		resend := time.NewTimer(interval)
 		defer resend.Stop()
 		for {
 			err = c.write(m, qid)
@@ -74,6 +80,8 @@ func (c *pipelineConn) exchange(ctx context.Context, m *dnsmsg.Msg) (*dnsmsg.Msg
 			}
 			select {
 			case <-resend.C:
+				interval *= 2
+				resend.Reset(interval)
 				continue
 			case <-ctx.Done():
 				return nil, context.Cause(ctx)
