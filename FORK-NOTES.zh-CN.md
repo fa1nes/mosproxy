@@ -151,7 +151,20 @@ Cloudflare 正在铺开 Encrypted Client Hello。客户端一旦从 HTTPS 记录
 压缩。**只移除 key 5，不丢弃整条记录**——丢掉会连 `alpn="h3"`（没有 HTTP/3）和
 `ipv4hint`/`ipv6hint` 一起失去。
 
-**CI 构建静态二进制** — `.github/workflows/release-binaries.yml`
+**多运营商 ECS 并发（`ecs.fanout`）** — `app/router/router_handle.go`、`ecs.go`、`ecs_zone.go`
+
+`ecs.fanout` 指向 `zone,prefix` 清单（格式同 `zone_overwrite`），列出一户人家实际用到的分片，
+比如家里宽带的「广东电信」和手机流量的「广东移动」。清单里某个分片的查询从上游拿到
+**scope 非 0** 的答案（说明权威按子网挑了节点，换个子网可能是另一组地址）时，mosproxy 在后台
+用清单里其余每个分片的代表子网各问一次，结果按各自分片写进缓存。手机从 Wi-Fi 切到流量后，
+第一次查询就能命中一条按「移动」挑好的缓存，而不是先拿到冷递归或别的运营商的节点。
+
+- 只在 scope 非 0 时触发：不分子网的答案换个分片问也一样，不浪费上游。
+- 目标分片缓存还新鲜就跳过；快过期（达到预取阈值）才刷新，所以被常用的分片不增加额外查询。
+- 并发查询复用预取的单飞与超时，不进访问日志，计数在 `ecs_fanout_total`；它们自身不再并发。
+- 不在清单里的分片（访客、出差）不会触发，避免替整户解析所有东西。
+
+ — `.github/workflows/release-binaries.yml`
 
 上游只发 Docker 镜像。打 tag 即产出 linux/amd64 与 arm64 静态二进制 + SHA256 + build-id，
 裸机部署不必装 Docker 或 Go。`build-id` 供部署脚本核对拿到的产物确实是这个 tag 构建的。

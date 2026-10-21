@@ -121,6 +121,7 @@ type Router struct {
 	// init later
 	ecsZone          *ECSZone                    // nil if not configured
 	ecsZoneOverwrite *ECSZoneOverWrite           // nil if not configured
+	ecsFanout        *ECSZoneOverWrite           // nil if not configured
 	cache            *CacheCtl                   // not nil, noop if no backend is configured
 	upstreams        map[string]*UpstreamWrapper // not nil
 	loadBalancers    map[string]*LoadBalancer    // not nil
@@ -136,6 +137,7 @@ type Router struct {
 	queryTotal         prometheus.Counter
 	queryCacheHitTotal prometheus.Counter
 	prefetchTotal      prometheus.Counter
+	ecsFanoutTotal     prometheus.Counter
 	echStrippedTotal   prometheus.Counter
 }
 
@@ -168,6 +170,10 @@ func Run(cfg *Config) (_ *Router, err error) {
 			Name: "prefetch_total",
 			Help: "The total number of prefetched queries",
 		}),
+		ecsFanoutTotal: prometheus.NewCounter(prometheus.CounterOpts{
+			Name: "ecs_fanout_total",
+			Help: "The total number of queries asked on behalf of another ecs zone",
+		}),
 		echStrippedTotal: prometheus.NewCounter(prometheus.CounterOpts{
 			Name: "ech_stripped_total",
 			Help: "The total number of responses that had an ech SvcParam removed",
@@ -185,6 +191,7 @@ func Run(cfg *Config) (_ *Router, err error) {
 		r.queryTotal,
 		r.queryCacheHitTotal,
 		r.prefetchTotal,
+		r.ecsFanoutTotal,
 		r.echStrippedTotal,
 	)
 	if err != nil {
@@ -229,6 +236,12 @@ func Run(cfg *Config) (_ *Router, err error) {
 		err = r.loadEcsZoneOverwrite(fp)
 		if err != nil {
 			return nil, fmt.Errorf("failed to zone ecs file, %w", err)
+		}
+	}
+	if fp := cfg.ECS.Fanout; len(fp) > 0 {
+		r.ecsFanout, err = r.loadMark2Prefix(fp, "ecs_fanout")
+		if err != nil {
+			return nil, fmt.Errorf("failed to load ecs fanout file, %w", err)
 		}
 	}
 

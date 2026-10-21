@@ -9,6 +9,20 @@ import (
 )
 
 func findECS(m *dnsmsg.Msg) netip.Prefix {
+	return unpackECS(findECSOpt(m))
+}
+
+// ecsScopeOf returns the SCOPE PREFIX-LENGTH an upstream put in its answer.
+// A non-zero scope means the answer was chosen for the subnet we sent, i.e.
+// another subnet may well get a different answer.
+func ecsScopeOf(m *dnsmsg.Msg) uint8 {
+	if b := findECSOpt(m); len(b) >= 4 {
+		return b[3]
+	}
+	return 0
+}
+
+func findECSOpt(m *dnsmsg.Msg) []byte {
 	for _, r := range m.Additionals {
 		if rr, ok := r.(*dnsmsg.RawResource); ok {
 			if rr.Type == dnsmsg.TypeOPT {
@@ -19,17 +33,17 @@ func findECS(m *dnsmsg.Msg) netip.Prefix {
 					b = b[4:]
 
 					if len(b) < l {
-						return netip.Prefix{}
+						return nil
 					}
 					if opCode == 8 {
-						return unpackECS(b[:l])
+						return b[:l]
 					}
 					b = b[l:]
 				}
 			}
 		}
 	}
-	return netip.Prefix{}
+	return nil
 }
 
 func unpackECS(b []byte) netip.Prefix {

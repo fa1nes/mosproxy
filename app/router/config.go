@@ -149,6 +149,12 @@ type ECSConfig struct {
 	Forward       bool     `yaml:"forward"`
 	IpZone        []string `yaml:"ip_zone"`
 	ZoneOverwrite []string `yaml:"zone_overwrite"`
+
+	// Fanout lists "zone,prefix" files. When a client in one of these zones
+	// gets a subnet specific answer, the same question is also asked on
+	// behalf of every other listed zone, so a device that moves between
+	// carriers finds a correct answer for its new zone already cached.
+	Fanout []string `yaml:"fanout"`
 }
 
 type APIConfig struct {

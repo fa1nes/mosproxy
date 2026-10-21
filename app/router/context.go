@@ -44,6 +44,9 @@ type QueryCtx struct {
 	// Other info
 	ECS2Upstream netip.Prefix // ECS that is going to send to upstream.
 	ECSZone      string       // zone name for the ECS addr.
+	ECSScope     uint8        // ECS scope the upstream answered with. 0 = answer is not subnet specific.
+
+	fanout bool // This query was issued by ecs fanout on behalf of another zone.
 
 	// Resp
 	resp     *dnsmsg.Msg
@@ -96,6 +99,8 @@ func (q *QueryCtx) Reset() {
 
 	q.ECS2Upstream = netip.Prefix{}
 	q.ECSZone = ""
+	q.ECSScope = 0
+	q.fanout = false
 
 	if q.resp != nil {
 		dnsmsg.ReleaseMsg(q.resp)
@@ -119,6 +124,8 @@ func (q *QueryCtx) Copy() *QueryCtx {
 
 	n.ECS2Upstream = q.ECS2Upstream
 	n.ECSZone = q.ECSZone
+	n.ECSScope = q.ECSScope
+	n.fanout = q.fanout
 
 	if q.resp != nil {
 		n.resp = q.resp.Copy()

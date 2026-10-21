@@ -22,6 +22,9 @@ func (r *Router) Reload() (err error) {
 	if r.ecsZoneOverwrite != nil {
 		reloaders = append(reloaders, r.ecsZoneOverwrite)
 	}
+	if r.ecsFanout != nil {
+		reloaders = append(reloaders, r.ecsFanout)
+	}
 	for _, l := range r.domainSets {
 		reloaders = append(reloaders, l)
 	}

@@ -66,7 +66,35 @@ func (g *ECSZoneOverWrite) Get(z string) (netip.Prefix, bool) {
 	return netip.Prefix{}, false
 }
 
+// Each calls fn for every zone in every loaded file. A zone listed in more
+// than one file is reported once, from the first file, like Get.
+func (g *ECSZoneOverWrite) Each(fn func(zone string, p netip.Prefix)) {
+	seen := make(map[string]struct{})
+	for _, loader := range g.fileLoaderGroup {
+		m := loader.V()
+		if m == nil {
+			continue
+		}
+		for z, p := range *m {
+			if _, dup := seen[z]; dup {
+				continue
+			}
+			seen[z] = struct{}{}
+			fn(z, p)
+		}
+	}
+}
+
 func (r *Router) loadEcsZoneOverwrite(fps []string) error {
+	g, err := r.loadMark2Prefix(fps, "ecs_zone_overwrite")
+	if err != nil {
+		return err
+	}
+	r.ecsZoneOverwrite = g
+	return nil
+}
+
+func (r *Router) loadMark2Prefix(fps []string, name string) (*ECSZoneOverWrite, error) {
 	parseFn := func(b []byte) (*map[string]netip.Prefix, error) {
 		m, err := ipmarker.LoadMark2PrefixFromReader(bytes.NewReader(b))
 		if err != nil {
@@ -79,7 +107,7 @@ func (r *Router) loadEcsZoneOverwrite(fps []string) error {
 	}
 	s := make([]*fileLoader[map[string]netip.Prefix], 0)
 	for _, fp := range fps {
-		logger := r.logger.With().Str("ecs_zone_overwrite", fp).Logger()
+		logger := r.logger.With().Str(name, fp).Logger()
 		loader := &fileLoader[map[string]netip.Prefix]{
 			fp:      fp,
 			parseFn: parseFn,
@@ -88,10 +116,9 @@ func (r *Router) loadEcsZoneOverwrite(fps []string) error {
 		}
 		_, err := loader.init()
 		if err != nil {
-			return fmt.Errorf("failed to load ecs zone overwrite from file %s, %w", fp, err)
+			return nil, fmt.Errorf("failed to load %s from file %s, %w", name, fp, err)
 		}
 		s = append(s, loader)
 	}
-	r.ecsZoneOverwrite = &ECSZoneOverWrite{fileLoaderGroup: s}
-	return nil
+	return &ECSZoneOverWrite{fileLoaderGroup: s}, nil
 }

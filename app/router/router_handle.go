@@ -101,7 +101,7 @@ func (r *Router) BuiltInHandler(ctx context.Context, q *QueryCtx) {
 	resp, t := r.cache.Get(ctx, ckb.B)
 	if resp != nil {
 		if r.needPrefetch(t) {
-			r.AsyncSingleFlightPrefetch(ckb.B, q, upstream)
+			r.AsyncSingleFlightPrefetch(ckb.B, q, upstream, matchedRule.cacheTag)
 		}
 		r.queryCacheHitTotal.Inc()
 		q.SetRespFrom(resp, "cache")
@@ -119,11 +119,12 @@ func (r *Router) BuiltInHandler(ctx context.Context, q *QueryCtx) {
 		return
 	}
 	r.cache.Store(ckb.B, q.Resp())
+	r.fanoutECS(q, upstream, matchedRule.cacheTag)
 }
 
 // Prefetching q in other goroutine.
 // If a query with same key is currently prefetching, do nothing.
-func (r *Router) AsyncSingleFlightPrefetch(key []byte, q *QueryCtx, u Upstream) {
+func (r *Router) AsyncSingleFlightPrefetch(key []byte, q *QueryCtx, u Upstream, routeTag string) {
 	if len(key) == 0 {
 		return
 	}
@@ -142,12 +143,12 @@ func (r *Router) AsyncSingleFlightPrefetch(key []byte, q *QueryCtx, u Upstream) 
 		// being served for the entire optimistic window. The map also grows
 		// without bound, which is remotely reachable via random subdomains.
 		defer r.prefetchSf.Done(sk)
-		r.DoPrefetch(utils.Str2BytesUnsafe(sk), qCopy, u)
+		r.DoPrefetch(utils.Str2BytesUnsafe(sk), qCopy, u, routeTag)
 	}()
 }
 
 // Send q to u, and save response under key.
-func (r *Router) DoPrefetch(key []byte, q *QueryCtx, u Upstream) {
+func (r *Router) DoPrefetch(key []byte, q *QueryCtx, u Upstream, routeTag string) {
 	if len(key) == 0 {
 		return
 	}
@@ -159,8 +160,50 @@ func (r *Router) DoPrefetch(key []byte, q *QueryCtx, u Upstream) {
 	if err != nil {
 		return
 	}
-	r.prefetchTotal.Inc()
+	if q.fanout {
+		r.ecsFanoutTotal.Inc()
+	} else {
+		r.prefetchTotal.Inc()
+	}
 	r.cache.Store(key, q.Resp())
+	r.fanoutECS(q, u, routeTag)
+}
+
+// fanoutECS asks q again on behalf of every other configured fanout zone,
+// in the background, when q's answer turned out to be subnet specific. Zones
+// whose cache entry is still fresh are skipped, so a zone that is refreshed by
+// its own clients costs nothing extra. Fanout queries never fan out again.
+func (r *Router) fanoutECS(q *QueryCtx, u Upstream, routeTag string) {
+	if r.ecsFanout == nil || q.fanout || q.ECSScope == 0 || len(q.ECSZone) == 0 {
+		return
+	}
+	// Only zones the operator listed take part; a visitor from elsewhere
+	// should not make us resolve everything for the whole household.
+	if _, ok := r.ecsFanout.Get(q.ECSZone); !ok {
+		return
+	}
+	r.ecsFanout.Each(func(zone string, p netip.Prefix) {
+		if zone == q.ECSZone || !p.IsValid() {
+			return
+		}
+		n := NewQueryCtx()
+		defer ReleaseQueryCtx(n)
+		n.Question.CopyFrom(&q.Question)
+		n.ECSZone = zone
+		n.ECS2Upstream = p
+		n.fanout = true
+
+		ckb := cacheKeyPool.Get()
+		defer cacheKeyPool.Release(ckb)
+		ckb.B = r.appendCacheKey(ckb.B, n, routeTag)
+		if resp, t := r.cache.Get(r.ctx, ckb.B); resp != nil {
+			dnsmsg.ReleaseMsg(resp)
+			if !r.needPrefetch(t) {
+				return
+			}
+		}
+		r.AsyncSingleFlightPrefetch(ckb.B, n, u, routeTag)
+	})
 }
 
 // forward query to upstream and set the response.
@@ -174,6 +217,7 @@ func (r *Router) forward(ctx context.Context, q *QueryCtx, upstream Upstream) er
 		return fmt.Errorf("failed to exchange, %w", err)
 	}
 	if resp := q.Resp(); resp != nil {
+		q.ECSScope = ecsScopeOf(resp)
 		dnsmsg.RemoveEDNS0(resp)
 		// Strip here, before the caller stores the response: this is the single point
 		// both the live path and DoPrefetch go through, and rewriting once on the way in
